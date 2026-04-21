@@ -1,0 +1,16 @@
+{
+  "DICT_5X5_250_7x5_sq30mm_mk22mm": {
+    "squares_x": 7,
+    "squares_y": 5,
+    "square_length_m": 0.03,
+    "marker_length_m": 0.022,
+    "dictionary": "DICT_5X5_250",
+    "paper": "A4",
+    "margin_mm": 10.0,
+    "dpi": 600,
+    "board_width_mm": 210.0,
+    "board_height_mm": 150.0,
+    "pdf_path": "d:\\My\\Code\\Python\\aruco_proj\\data\\DICT_5X5_250_7x5_sq30mm_mk22mm.pdf",
+    "png_path": "d:\\My\\Code\\Python\\aruco_proj\\data\\DICT_5X5_250_7x5_sq30mm_mk22mm.png"
+  }
+}
