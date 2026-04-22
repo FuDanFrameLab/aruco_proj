@@ -36,23 +36,43 @@ from common.aruco_utils import (  # noqa: E402
     open_camera,
 )
 
-RECORD_SIZES = {
-    "640x480": (640, 480),
-    "960x540": (960, 540),
-    "1280x720": (1280, 720),
-    "1920x1080": (1920, 1080),
-    "2560x1440": (2560, 1440),
-    "3840x2160": (3840, 2160),
-}
+SIZE_SUGGESTIONS = [
+    "Native",
+    "640x480",
+    "960x540",
+    "1024x768",
+    "1280x720",
+    "1920x1080",
+    "2560x1440",
+    "3840x2160",
+]
 
 REQUESTED_FPS = {
-    "640x480": 60.0,
-    "960x540": 60.0,
-    "1280x720": 60.0,
-    "1920x1080": 30.0,
-    "2560x1440": 30.0,
-    "3840x2160": 25.0,
+    (640, 480): 60.0,
+    (960, 540): 60.0,
+    (1024, 768): 30.0,
+    (1280, 720): 60.0,
+    (1920, 1080): 30.0,
+    (2560, 1440): 30.0,
+    (3840, 2160): 25.0,
 }
+
+
+def _parse_size(text: str) -> tuple[int, int] | None:
+    """Parse a 'WxH' string. Returns None for 'Native', empty, or invalid input."""
+    s = (text or "").strip().lower()
+    if not s or s == "native":
+        return None
+    if "x" not in s:
+        return None
+    try:
+        w_str, h_str = s.split("x", 1)
+        w, h = int(w_str), int(h_str)
+        if w <= 0 or h <= 0:
+            return None
+        return w, h
+    except ValueError:
+        return None
 
 
 class RecorderApp:
@@ -75,6 +95,7 @@ class RecorderApp:
         self.record_start: float | None = None
         self.frame_index = 0
         self.record_size: tuple[int, int] = (1280, 720)
+        self.actual_size: tuple[int, int] | None = None
         self.marker_ids_universe: list[int] = []
 
         self._build_ui()
@@ -114,10 +135,10 @@ class RecorderApp:
         ttk.Button(top, text="Reload", command=self._refresh_intrinsics).grid(row=2, column=3, pady=(6, 0))
 
         ttk.Label(top, text="Record size:").grid(row=3, column=0, sticky="w", pady=(6, 0))
-        self.size_var = tk.StringVar(value="1280x720")
+        self.size_var = tk.StringVar(value="Native")
         ttk.Combobox(
-            top, textvariable=self.size_var, values=list(RECORD_SIZES.keys()),
-            width=12, state="readonly",
+            top, textvariable=self.size_var, values=SIZE_SUGGESTIONS,
+            width=12,
         ).grid(row=3, column=1, sticky="w", pady=(6, 0))
 
         self.connect_btn = ttk.Button(top, text="Connect", command=self._toggle_connect)
@@ -168,31 +189,50 @@ class RecorderApp:
             return
 
         cam_name = self.cam_name_var.get().strip() or f"camera{idx}"
-        w_req, h_req = RECORD_SIZES[self.size_var.get()]
-        lookup_key = f"{cam_name}@{w_req}x{h_req}"
-        if not self._load_intrinsics_for(lookup_key) and not self._load_intrinsics_for(cam_name):
+        self._apply_capture_size()
+        actual = self._probe_actual_size()
+        if actual is None:
+            messagebox.showerror("Camera error", "Could not read a frame from the camera.")
+            self.cap.release()
+            self.cap = None
+            return
+        self.actual_size = actual
+        aw, ah = actual
+
+        req = _parse_size(self.size_var.get())
+        if req is not None and req != actual:
+            messagebox.showwarning(
+                "Resolution mismatch",
+                f"Requested {req[0]}x{req[1]}, but the camera delivered {aw}x{ah}.\n"
+                "Intrinsics will be looked up against the actual size. "
+                "Pose accuracy requires intrinsics calibrated at that exact resolution.",
+            )
+
+        lookup_key = f"{cam_name}@{aw}x{ah}"
+        if not self._load_intrinsics_for(lookup_key):
             self.K = None
             self.dist = None
             self.intrinsics_source = None
             choice = self.intr_var.get().strip()
             if choice:
                 self._load_intrinsics_for(choice)
-                messagebox.showinfo(
-                    "Intrinsics",
-                    f"No entry for '{cam_name}'. Using manually selected '{choice}'.",
+                messagebox.showwarning(
+                    "Intrinsics resolution",
+                    f"No entry for '{lookup_key}'. Using manually selected '{choice}'.\n"
+                    "If that entry was calibrated at a different resolution, "
+                    "pose estimates will be wrong.",
                 )
             else:
                 messagebox.showwarning(
                     "No intrinsics",
-                    f"No intrinsics for '{cam_name}'. Calibrate the camera, "
-                    "or pick one from the Intrinsics dropdown and reconnect.\n"
-                    "Preview will continue without pose estimation.",
+                    f"No intrinsics for '{lookup_key}'. Calibrate the camera "
+                    f"at {aw}x{ah}, or pick one from the Intrinsics dropdown "
+                    "and reconnect.\nPreview will continue without pose estimation.",
                 )
 
         self.preview_running = True
         self.connect_btn.configure(text="Disconnect")
         self.record_btn.configure(state="normal")
-        self._apply_capture_size()
         self.preview_thread = threading.Thread(target=self._preview_loop, daemon=True)
         self.preview_thread.start()
 
@@ -212,26 +252,27 @@ class RecorderApp:
     def _apply_capture_size(self) -> None:
         if self.cap is None:
             return
-        key = self.size_var.get()
-        w, h = RECORD_SIZES[key]
+        req = _parse_size(self.size_var.get())
+        if req is None:
+            return
+        w, h = req
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(w))
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, float(h))
-        fps_req = REQUESTED_FPS.get(key, 30.0)
+        fps_req = REQUESTED_FPS.get((w, h), 30.0)
         self.cap.set(cv2.CAP_PROP_FPS, float(fps_req))
 
-    def _letterbox(self, frame: np.ndarray, target: tuple[int, int]) -> np.ndarray:
-        tw, th = target
-        h, w = frame.shape[:2]
-        if (w, h) == (tw, th):
-            return frame
-        scale = min(tw / w, th / h)
-        nw, nh = int(round(w * scale)), int(round(h * scale))
-        resized = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_AREA)
-        out = np.zeros((th, tw, 3), dtype=frame.dtype)
-        x = (tw - nw) // 2
-        y = (th - nh) // 2
-        out[y:y + nh, x:x + nw] = resized
-        return out
+    def _probe_actual_size(self) -> tuple[int, int] | None:
+        """Read a probe frame and return its real (w, h). Preferred over cap.get,
+        which can lie about what frames actually come out."""
+        if self.cap is None:
+            return None
+        for _ in range(5):
+            ok, frame = self.cap.read()
+            if ok and frame is not None:
+                h, w = frame.shape[:2]
+                return w, h
+            time.sleep(0.02)
+        return None
 
     def _detect_markers(self, gray: np.ndarray):
         aruco_dict = get_aruco_dict(self.dict_var.get())
@@ -305,8 +346,7 @@ class RecorderApp:
                         self._draw_pose_label(vis, corners[i], int(ids[i][0]), rvecs[i], tvecs[i])
 
             if self.recording and self.writer is not None:
-                record_frame = self._letterbox(proc_frame, self.record_size)
-                self._write_record_row(record_frame, ids, rvecs, tvecs)
+                self._write_record_row(proc_frame, ids, rvecs, tvecs)
 
             self._show_frame(vis)
             now = time.time()
@@ -387,13 +427,11 @@ class RecorderApp:
             self._stop_recording()
 
     def _start_recording(self) -> None:
-        size_key = self.size_var.get()
-        w, h = RECORD_SIZES[size_key]
+        if self.cap is None or self.actual_size is None:
+            return
+        w, h = self.actual_size
         self.record_size = (w, h)
 
-        if self.cap is None:
-            return
-        self._apply_capture_size()
         ok, probe = self.cap.read()
         if not ok:
             messagebox.showerror("Recorder", "Failed to grab a probe frame.")
@@ -409,11 +447,10 @@ class RecorderApp:
             return
         self.marker_ids_universe = sorted({int(i) for i in probe_ids.flatten().tolist()})
 
-        fps = REQUESTED_FPS.get(size_key, 30.0)
-        if self.cap is not None:
-            measured = self.cap.get(cv2.CAP_PROP_FPS)
-            if measured and measured > 1:
-                fps = float(measured)
+        fps = REQUESTED_FPS.get((w, h), 30.0)
+        measured = self.cap.get(cv2.CAP_PROP_FPS)
+        if measured and measured > 1:
+            fps = float(measured)
 
         os.makedirs(DATA_DIR, exist_ok=True)
         stamp = time.strftime("%Y%m%d_%H%M%S")

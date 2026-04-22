@@ -83,8 +83,8 @@ class CalibrationApp:
         self.res_var = tk.StringVar(value="Native")
         ttk.Combobox(
             top, textvariable=self.res_var,
-            values=["Native", "640x480", "960x540", "1280x720", "1920x1080", "2560x1440", "3840x2160"],
-            width=12, state="readonly",
+            values=["Native", "640x480", "960x540", "1024x768", "1280x720", "1920x1080", "2560x1440", "3840x2160"],
+            width=12,
         ).grid(row=2, column=1, sticky="w", pady=(6, 0))
 
         self.open_btn = ttk.Button(top, text="Open Camera", command=self._toggle_camera)
@@ -120,12 +120,16 @@ class CalibrationApp:
     def _apply_capture_size(self) -> None:
         if self.cap is None:
             return
-        sel = self.res_var.get()
-        if sel == "Native" or "x" not in sel:
+        sel = (self.res_var.get() or "").strip().lower()
+        if not sel or sel == "native" or "x" not in sel:
             return
-        w_str, h_str = sel.split("x")
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(int(w_str)))
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, float(int(h_str)))
+        try:
+            w_str, h_str = sel.split("x", 1)
+            w, h = int(w_str), int(h_str)
+        except ValueError:
+            return
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(w))
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, float(h))
 
     def _toggle_camera(self) -> None:
         if self.preview_running:
