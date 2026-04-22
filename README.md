@@ -62,6 +62,9 @@ python -m scripts.recorder_gui
 - **Record size** 下拉选择录制尺寸；点 **Start Recording**：
   - 视频 → `data/record_<name>_<ts>.mp4`（以所选尺寸保存）。
   - 位姿 → `data/record_<name>_<ts>.csv`，列：`frame_index,timestamp_s`，之后每个 marker ID 固定 7 列 `detected,rx,ry,rz,tx,ty,tz`；未检测到的 ID 该帧写 0，保证按 `frame_index` / `timestamp_s` 能与视频对齐。
+
+
+> 目前录制下来的视频里是没有aruco码的坐标轴的，如果需要可以自行后处理加上
  
 
 ## 声明
